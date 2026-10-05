@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loading Eaglercraft...</title>
+<style>
+html,body{
+  width:100%;
+  height:100%;
+  margin:0;
+  background:#000;
+  color:#fff;
+  font-family:system-ui,sans-serif;
+  overflow:hidden;
+}
+#status{
+  position:fixed;
+  inset:0;
+  display:grid;
+  place-items:center;
+  font-size:16px;
+  background:#000;
+  z-index:9999;
+  text-align:center;
+  padding:24px;
+  box-sizing:border-box;
+  white-space:pre-wrap;
+}
+#bar{
+  position:fixed;
+  left:10%;
+  right:10%;
+  bottom:18%;
+  height:8px;
+  background:#222;
+  border-radius:99px;
+  overflow:hidden;
+}
+#fill{
+  width:0;
+  height:100%;
+  background:#fff;
+  transition:width .1s linear;
+}
+</style>
+</head>
+<body>
+<div id="status">Starting...</div>
+<div id="bar"><div id="fill"></div></div>
+
+<script>
+(async()=>{
+  const BASES = [
+    "https://cdn.jsdelivr.net/gh/swithred/minecraft-stream@main/",
+    "https://fastly.jsdelivr.net/gh/swithred/minecraft-stream@main/",
+    "https://gcore.jsdelivr.net/gh/swithred/minecraft-stream@main/",
+    "https://testingcf.jsdelivr.net/gh/swithred/minecraft-stream@main/"
+  ];
+
+  const PARTS = [
+    "eaglercraft.part01",
+    "eaglercraft.part02",
+    "eaglercraft.part03",
+    "eaglercraft.part04",
+    "eaglercraft.part05"
+  ];
+
+  const TIMEOUT = 30000;
+  const status = document.getElementById("status");
+  const fill = document.getElementById("fill");
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function fetchWithTimeout(url, partIndex) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT);
+
+    try {
+      const response = await fetch(url, {
+        method:"GET",
+        mode:"cors",
+        credentials:"omit",
+        cache:"force-cache",
+        signal:controller.signal
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.body) throw new Error("Streaming response unavailable");
+
+      const contentLength =
+        Number(response.headers.get("content-length")) || 0;
+
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+
+      while (true) {
+        const {done,value} = await reader.read();
+        if (done) break;
+
+        chunks.push(value);
+        received += value.byteLength;
+
+        const mb = (received / 1048576).toFixed(1);
+        const suffix = contentLength
+          ? ` / ${(contentLength / 1048576).toFixed(1)} MB`
+          : "";
+
+        status.textContent =
+          `Loading file ${partIndex + 1}/${PARTS.length}\n${mb} MB${suffix}`;
+      }
+
+      const result = new Uint8Array(received);
+      let offset = 0;
+
+      for (const chunk of chunks) {
+        result.set(chunk,offset);
+        offset += chunk.byteLength;
+      }
+
+      return result.buffer;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchPart(partIndex) {
+    let lastError = null;
+
+    for (const base of BASES) {
+      const url = base + PARTS[partIndex];
+
+      status.textContent =
+        `Connecting to file ${partIndex + 1}/${PARTS.length}\n${base}`;
+
+      try {
+        const buffer = await fetchWithTimeout(url,partIndex);
+
+        if (!buffer.byteLength)
+          throw new Error("Empty response");
+
+        return buffer;
+      } catch (error) {
+        lastError = error;
+        await sleep(250);
+      }
+    }
+
+    throw new Error(
+      `File ${partIndex + 1} could not be downloaded.\n` +
+      (lastError?.message || lastError)
+    );
+  }
+
+  try {
+    const buffers = [];
+    let total = 0;
+
+    for (let i = 0; i < PARTS.length; i++) {
+      const buffer = await fetchPart(i);
+      buffers.push(buffer);
+      total += buffer.byteLength;
+      fill.style.width =
+        `${((i + 1) / PARTS.length) * 100}%`;
+    }
+
+    status.textContent = "Rebuilding Eaglercraft...";
+
+    const combined = new Uint8Array(total);
+    let offset = 0;
+
+    for (const buffer of buffers) {
+      combined.set(new Uint8Array(buffer),offset);
+      offset += buffer.byteLength;
+    }
+
+    status.textContent = "Starting Eaglercraft...";
+
+    const html =
+      new TextDecoder("utf-8",{fatal:true}).decode(combined);
+
+    document.open();
+    document.write(html);
+    document.close();
+
+  } catch (error) {
+    status.textContent =
+      "Failed to load Eaglercraft:\n" +
+      (error?.message || String(error));
+
+    console.error(error);
+  }
+})();
+</script>
+</body>
+</html>
